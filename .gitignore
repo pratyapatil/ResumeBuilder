@@ -16,3 +16,4 @@
 /.vercel/
 /.codex
 .DS_Store
+/.script.py

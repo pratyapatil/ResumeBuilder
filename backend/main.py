@@ -238,7 +238,10 @@ app.add_middleware(
 # OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://host.docker.internal:11434")
 # MODEL_NAME = os.getenv("MODEL_NAME", "llama3.2")
 
-OLLAMA_HOST = config("MODEL_HOST_NAME", default="http://host.docker.internal:11434/api/generate")
+OLLAMA_HOST = config(
+    "MODEL_HOST_NAME",
+    default=config("OLLAMA_HOST", default="http://host.docker.internal:11434/api/generate"),
+)
 MODEL_NAME = config("MODEL_NAME", default="llama3.2")
 API_KEY = config("API_KEY", default="")
 
@@ -315,6 +318,201 @@ def split_bullet_lines(text):
             line = line[1:].strip()
         lines.append(line)
     return lines
+
+
+def prune_empty(value):
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            normalized = prune_empty(item)
+            if normalized in ("", None, [], {}):
+                continue
+            cleaned[key] = normalized
+        return cleaned
+
+    if isinstance(value, list):
+        cleaned = [prune_empty(item) for item in value]
+        return [item for item in cleaned if item not in ("", None, [], {})]
+
+    if isinstance(value, str):
+        return value.strip()
+
+    return value
+
+
+def compact_resume_for_llm(resume_data):
+    personal_info = resume_data.get("personalInfo", {}) or {}
+    full_name = f"{safe_text(personal_info.get('firstName'))} {safe_text(personal_info.get('lastName'))}".strip()
+
+    experience = []
+    for job in resume_data.get("experience", []) or []:
+        if not isinstance(job, dict):
+            continue
+        experience.append(
+            prune_empty(
+                {
+                    "company": safe_text(job.get("company")),
+                    "role": safe_text(job.get("position") or job.get("role")),
+                    "dates": format_date_range(job.get("startDate"), job.get("endDate")),
+                    "highlights": split_bullet_lines(job.get("description"))[:5],
+                }
+            )
+        )
+
+    education = []
+    for entry in resume_data.get("education", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        education.append(
+            prune_empty(
+                {
+                    "institution": safe_text(entry.get("institution") or entry.get("school")),
+                    "degree": safe_text(entry.get("degree")),
+                    "dates": format_date_range(entry.get("startDate"), entry.get("endDate")),
+                    "details": split_bullet_lines(entry.get("description"))[:3],
+                }
+            )
+        )
+
+    projects = []
+    for project in resume_data.get("projects", []) or []:
+        if not isinstance(project, dict):
+            continue
+        projects.append(
+            prune_empty(
+                {
+                    "title": safe_text(project.get("title")),
+                    "link": safe_text(project.get("link")),
+                    "highlights": split_bullet_lines(project.get("description"))[:4],
+                }
+            )
+        )
+
+    certifications = []
+    for cert in resume_data.get("certifications", []) or []:
+        if not isinstance(cert, dict):
+            continue
+        certifications.append(
+            prune_empty(
+                {
+                    "name": safe_text(cert.get("name")),
+                    "issuer": safe_text(cert.get("issuer")),
+                    "date": safe_text(cert.get("date")),
+                }
+            )
+        )
+
+    skills = []
+    for skill in resume_data.get("skills", []) or []:
+        name = safe_text(skill.get("name")) if isinstance(skill, dict) else safe_text(skill)
+        if name:
+            skills.append(name)
+
+    languages = [safe_text(language) for language in (resume_data.get("languages", []) or [])]
+    languages = [language for language in languages if language]
+
+    custom_sections = []
+    for section in resume_data.get("customSections", []) or []:
+        if not isinstance(section, dict):
+            continue
+        items = []
+        for item in section.get("items", []) or []:
+            if not isinstance(item, dict):
+                continue
+            items.append(
+                prune_empty(
+                    {
+                        "header": safe_text(item.get("header")),
+                        "sub_header": safe_text(item.get("subHeader")),
+                        "date": safe_text(item.get("date")),
+                        "description": safe_text(item.get("description")),
+                    }
+                )
+            )
+        custom_sections.append(
+            prune_empty(
+                {
+                    "title": safe_text(section.get("title")),
+                    "items": items[:4],
+                }
+            )
+        )
+
+    return prune_empty(
+        {
+            "personal_info": {
+                "name": full_name,
+                "title": safe_text(personal_info.get("title")),
+                "summary": safe_text(personal_info.get("summary")),
+                "email": safe_text(personal_info.get("email")),
+                "phone": safe_text(personal_info.get("phone")),
+                "address": safe_text(personal_info.get("address")),
+                "linkedin": safe_text(personal_info.get("linkedin")),
+                "github": safe_text(personal_info.get("github")),
+                "portfolio": safe_text(personal_info.get("portfolio")),
+            },
+            "experience": experience[:6],
+            "education": education[:4],
+            "projects": projects[:6],
+            "certifications": certifications[:6],
+            "skills": skills[:40],
+            "languages": languages[:10],
+            "custom_sections": custom_sections[:4],
+        }
+    )
+
+
+def build_analysis_prompt(resume_data, job_description):
+    resume_snapshot = compact_resume_for_llm(resume_data)
+    return f"""
+            You are an expert ATS (Applicant Tracking System) analyst and career coach.
+            Analyze the following resume data against the provided job description.
+            
+            ### Job Description:
+            {safe_text(job_description)}
+            
+            ### Resume Data:
+            {json.dumps(resume_snapshot, indent=2, ensure_ascii=False)}
+            
+            ### Goal:
+            1. ATS match score (0-100).
+            2. List missing skills from JD.
+            3. 3-5 bullet point improvements.
+            
+            Return ONLY a valid JSON object.
+            Do not include markdown fences.
+            Do not include any explanation before or after the JSON.
+
+            ### Output Format (JSON only):
+            {{
+                "ats_score": number,
+                "missing_skills": ["skill1", "skill2"],
+                "improvements": ["tip1", "tip2"]
+            }}
+            """
+
+
+def extract_upstream_error_message(error_text, status_code):
+    stripped = safe_text(error_text)
+    if not stripped:
+        return f"Upstream model request failed with status {status_code}"
+
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        return stripped
+
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = safe_text(error.get("message"))
+            if message:
+                return message
+        message = safe_text(payload.get("message"))
+        if message:
+            return message
+
+    return stripped
 
 
 def add_paragraph_with_lines(doc, text, style=None):
@@ -568,38 +766,20 @@ def render_resume_doc(doc, resume_data):
 async def analyze_resume_stream(request: ResumeAnalysisRequest):
     async def event_generator():
         try:
-            # 1. Sanitize resume data: Remove heavy base64 'photo' property before sending to LLM
             clean_resume = dict(request.resume_data)
             if clean_resume.get("personalInfo") and "photo" in clean_resume["personalInfo"]:
                 clean_resume["personalInfo"] = dict(clean_resume["personalInfo"])
                 clean_resume["personalInfo"].pop("photo", None)
 
-            prompt = f"""
-            You are an expert ATS (Applicant Tracking System) analyst and career coach.
-            Analyze the following resume data against the provided job description.
-            
-            ### Job Description:
-            {request.job_description}
-            
-            ### Resume Data:
-            {json.dumps(clean_resume, indent=2)}
-            
-            ### Goal:
-            1. ATS match score (0-100).
-            2. List missing skills from JD.
-            3. 3-5 bullet point improvements.
-            
-            Return ONLY a valid JSON object.
-            Do not include markdown fences.
-            Do not include any explanation before or after the JSON.
-
-            ### Output Format (JSON only):
-            {{
-                "ats_score": number,
-                "missing_skills": ["skill1", "skill2"],
-                "improvements": ["tip1", "tip2"]
-            }}
-            """
+            prompt = build_analysis_prompt(clean_resume, request.job_description)
+            request_payload = {
+                "model": MODEL_NAME,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_completion_tokens": 4096,
+                "stream": True,
+                "format": "json",
+            }
 
             headers = {
                 "Content-Type": "application/json"
@@ -607,22 +787,34 @@ async def analyze_resume_stream(request: ResumeAnalysisRequest):
             if API_KEY:
                 headers["Authorization"] = f"Bearer {API_KEY}"
 
+            logger.info(
+                "Submitting resume analysis request: host=%s model=%s prompt_chars=%s job_description_chars=%s",
+                OLLAMA_HOST,
+                MODEL_NAME,
+                len(prompt),
+                len(safe_text(request.job_description)),
+            )
+
             async with httpx.AsyncClient(timeout=600.0) as client:
                 async with client.stream(
                     "POST",
-                    # f"{OLLAMA_HOST}/api/generate",
                     f"{OLLAMA_HOST}",
                     headers=headers,
-                    json={
-                        "model": MODEL_NAME,
-                        "messages": [{ "role": "user", "content": prompt }],
-                        "temperature": 0.1,
-                        "max_completion_tokens": 4096,
-                        "stream": True,
-                        "format": "json"
-                    }
+                    json=request_payload
                 ) as response:
-                    response.raise_for_status()
+                    if response.is_error:
+                        error_text = (await response.aread()).decode("utf-8", errors="replace").strip()
+                        error_message = extract_upstream_error_message(error_text, response.status_code)
+                        logger.error(
+                            "Upstream analysis request failed: status=%s host=%s model=%s body=%s",
+                            response.status_code,
+                            OLLAMA_HOST,
+                            MODEL_NAME,
+                            error_text,
+                        )
+                        yield f"data: {json.dumps({'error': error_message})}\n\n"
+                        return
+
                     full_response = ""
                     async for line in response.aiter_lines():
                         if not line:
