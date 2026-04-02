@@ -1,0 +1,35 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    networks:
+      - resume-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - MODEL_NAME=llama3.2
+    networks:
+      - resume-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  resume-network:
+    driver: bridge
+
+volumes:
+  ollama_data:

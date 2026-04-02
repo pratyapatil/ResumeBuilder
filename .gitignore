@@ -1,0 +1,18 @@
+# Frontend
+/frontend/node_modules/
+/frontend/dist/
+/frontend/public/template.docx
+/frontend/.env
+/frontend/.env.*
+!/frontend/.env.example
+
+# Backend
+/backend/ENV/
+/backend/__pycache__/
+/backend/.env
+/backend/*.pyc
+
+# Local tooling
+/.vercel/
+/.codex
+.DS_Store

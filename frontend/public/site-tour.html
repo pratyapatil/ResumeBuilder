@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ResumeCraft Site Tour</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: rgba(15, 23, 42, 0.74);
+        --panel-border: rgba(148, 163, 184, 0.2);
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --indigo: #6366f1;
+        --indigo-2: #818cf8;
+        --emerald: #10b981;
+        --amber: #f59e0b;
+        --rose: #fb7185;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", Roboto, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(99, 102, 241, 0.18), transparent 28%),
+          radial-gradient(circle at top right, rgba(16, 185, 129, 0.16), transparent 22%),
+          linear-gradient(160deg, #020617, #0f172a 55%, #111827);
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+
+      .shell {
+        width: min(100%, 1320px);
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 28px;
+        padding: 22px;
+        backdrop-filter: blur(18px);
+        box-shadow: 0 30px 80px rgba(2, 6, 23, 0.45);
+      }
+
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 18px;
+      }
+
+      .title h1 {
+        margin: 0;
+        font-size: 1.6rem;
+      }
+
+      .title p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .controls {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 18px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 140ms ease, opacity 140ms ease, background 140ms ease;
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+      }
+
+      button.primary {
+        background: linear-gradient(135deg, var(--indigo), var(--indigo-2));
+        color: white;
+      }
+
+      button.secondary {
+        background: rgba(148, 163, 184, 0.14);
+        color: var(--text);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+      }
+
+      button.success {
+        background: linear-gradient(135deg, #059669, #10b981);
+        color: white;
+      }
+
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+        transform: none;
+      }
+
+      canvas {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 16 / 9;
+        display: block;
+        border-radius: 22px;
+        background: linear-gradient(180deg, #eef2ff, #dbeafe);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+      }
+
+      .footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        margin-top: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .status {
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .status strong {
+        color: var(--text);
+      }
+
+      code {
+        background: rgba(15, 23, 42, 0.45);
+        padding: 2px 8px;
+        border-radius: 999px;
+        color: #c7d2fe;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="topbar">
+        <div class="title">
+          <h1>ResumeCraft Tour Generator</h1>
+          <p>Animated walkthrough of the actual product flow: create, refine, analyze, preview, and export.</p>
+        </div>
+        <div class="controls">
+          <button class="primary" id="playBtn">Play</button>
+          <button class="secondary" id="pauseBtn">Pause</button>
+          <button class="secondary" id="restartBtn">Restart</button>
+          <button class="success" id="recordBtn">Export WebM</button>
+        </div>
+      </div>
+
+      <canvas id="tourCanvas" width="1600" height="900"></canvas>
+
+      <div class="footer">
+        <div class="status" id="statusText">
+          <strong>Tip:</strong> click <code>Export WebM</code> and wait for the full run to download the video.
+        </div>
+        <div class="status">Output: 1600x900, autoplaying product tour</div>
+      </div>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("tourCanvas");
+      const ctx = canvas.getContext("2d");
+      const playBtn = document.getElementById("playBtn");
+      const pauseBtn = document.getElementById("pauseBtn");
+      const restartBtn = document.getElementById("restartBtn");
+      const recordBtn = document.getElementById("recordBtn");
+      const statusText = document.getElementById("statusText");
+
+      const W = canvas.width;
+      const H = canvas.height;
+      const timeline = [
+        { key: "intro", duration: 4.6 },
+        { key: "workspace", duration: 5.4 },
+        { key: "form", duration: 5.2 },
+        { key: "templates", duration: 4.8 },
+        { key: "paste", duration: 4.8 },
+        { key: "layout", duration: 4.8 },
+        { key: "ai", duration: 5.8 },
+        { key: "export", duration: 4.6 },
+      ];
+      const totalDuration = timeline.reduce((sum, scene) => sum + scene.duration, 0);
+
+      let startedAt = 0;
+      let accumulated = 0;
+      let isPlaying = true;
+      let rafId = 0;
+      let recorder = null;
+      let recordedChunks = [];
+      let recording = false;
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function easeOutCubic(t) {
+        const p = clamp(t, 0, 1);
+        return 1 - Math.pow(1 - p, 3);
+      }
+
+      function easeInOut(t) {
+        const p = clamp(t, 0, 1);
+        return p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+      }
+
+      function alpha(color, a) {
+        return color.replace("ALPHA", a);
+      }
+
+      function getPlayhead(now) {
+        if (!isPlaying) return accumulated;
+        return accumulated + (now - startedAt) / 1000;
+      }
+
+      function getScene(time) {
+        let cursor = 0;
+        for (const scene of timeline) {
+          if (time <= cursor + scene.duration) {
+            return {
+              ...scene,
+              start: cursor,
+              end: cursor + scene.duration,
+              localTime: time - cursor,
+              progress: clamp((time - cursor) / scene.duration, 0, 1),
+            };
+          }
+          cursor += scene.duration;
+        }
+        const last = timeline[timeline.length - 1];
+        return {
+          ...last,
+          start: totalDuration - last.duration,
+          end: totalDuration,
+          localTime: last.duration,
+          progress: 1,
+        };
+      }
+
+      function roundedRect(x, y, w, h, r, fill, stroke) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        if (fill) {
+          ctx.fillStyle = fill;
+          ctx.fill();
+        }
+        if (stroke) {
+          ctx.strokeStyle = stroke;
+          ctx.stroke();
+        }
+      }
+
+      function text(content, x, y, opts = {}) {
+        ctx.save();
+        ctx.fillStyle = opts.color || "#0f172a";
+        ctx.font = opts.font || "600 26px Segoe UI";
+        ctx.textAlign = opts.align || "left";
+        ctx.textBaseline = opts.baseline || "top";
+        ctx.fillText(content, x, y);
+        ctx.restore();
+      }
+
+      function wrapText(content, x, y, maxWidth, lineHeight, opts = {}) {
+        ctx.save();
+        ctx.fillStyle = opts.color || "#334155";
+        ctx.font = opts.font || "500 22px Segoe UI";
+        ctx.textAlign = opts.align || "left";
+        ctx.textBaseline = "top";
+        const words = content.split(" ");
+        let line = "";
+        let cursorY = y;
+        for (const word of words) {
+          const test = line ? `${line} ${word}` : word;
+          if (ctx.measureText(test).width > maxWidth && line) {
+            ctx.fillText(line, x, cursorY);
+            line = word;
+            cursorY += lineHeight;
+          } else {
+            line = test;
+          }
+        }
+        if (line) ctx.fillText(line, x, cursorY);
+        ctx.restore();
+      }
+
+      function drawBackdrop() {
+        const bg = ctx.createLinearGradient(0, 0, W, H);
+        bg.addColorStop(0, "#f8fafc");
+        bg.addColorStop(0.5, "#e0e7ff");
+        bg.addColorStop(1, "#dbeafe");
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.fillStyle = "rgba(99, 102, 241, 0.08)";
+        ctx.beginPath();
+        ctx.arc(220, 160, 180, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "rgba(16, 185, 129, 0.08)";
+        ctx.beginPath();
+        ctx.arc(1380, 140, 150, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      function drawAppShell(sceneTitle, sceneBody, progress, activeTab = "Fill Form") {
+        roundedRect(84, 72, 1432, 756, 30, "#ffffff", "rgba(148,163,184,0.24)");
+        roundedRect(84, 72, 1432, 92, 30, "#ffffff", null);
+        ctx.strokeStyle = "rgba(148,163,184,0.22)";
+        ctx.beginPath();
+        ctx.moveTo(84, 164);
+        ctx.lineTo(1516, 164);
+        ctx.stroke();
+
+        text("ResumeCraft", 128, 102, { font: "800 38px Segoe UI", color: "#4f46e5" });
+        text("Professional Resume Builder", 128, 144, { font: "500 20px Segoe UI", color: "#64748b" });
+
+        roundedRect(1118, 98, 290, 44, 12, "#f8fafc", "rgba(148,163,184,0.28)");
+        text("Single Column Timeline (Safe)", 1140, 108, { font: "700 18px Segoe UI", color: "#334155" });
+
+        const tabs = ["Fill Form", "Layout Options", "Paste Resume", "AI Analysis"];
+        tabs.forEach((tab, index) => {
+          const x = 100 + index * 174;
+          const isActive = tab === activeTab;
+          roundedRect(x, 188, 162, 44, 12, isActive ? "#eef2ff" : "#ffffff", isActive ? "#6366f1" : "rgba(148,163,184,0.2)");
+          text(tab, x + 18, 200, {
+            font: "700 18px Segoe UI",
+            color: isActive ? "#4f46e5" : "#475569",
+          });
+        });
+
+        roundedRect(100, 252, 610, 546, 24, "#ffffff", "rgba(148,163,184,0.25)");
+        roundedRect(736, 252, 744, 546, 24, "#e2e8f0", "rgba(148,163,184,0.25)");
+        roundedRect(760, 274, 696, 58, 16, "#ffffff", "rgba(148,163,184,0.25)");
+        text("Live Preview", 790, 292, { font: "800 24px Segoe UI", color: "#1e293b" });
+        roundedRect(1186, 284, 108, 36, 10, "#4f46e5", null);
+        roundedRect(1310, 284, 120, 36, 10, "#10b981", null);
+        text("PDF", 1228, 292, { font: "800 16px Segoe UI", color: "#ffffff", align: "center" });
+        text("Word (.docx)", 1370, 292, { font: "800 16px Segoe UI", color: "#ffffff", align: "center" });
+
+        roundedRect(834, 352, 548, 390, 8, "#ffffff", "rgba(100,116,139,0.18)");
+        text(sceneTitle, 112, 282, { font: "800 26px Segoe UI", color: "#0f172a" });
+        wrapText(sceneBody, 112, 322, 560, 34, { font: "500 22px Segoe UI", color: "#475569" });
+
+        roundedRect(110, 712, 250, 50, 16, "#f8fafc", "rgba(148,163,184,0.25)");
+        text(`Scene progress ${(progress * 100).toFixed(0)}%`, 138, 726, { font: "700 18px Segoe UI", color: "#334155" });
+      }
+
+      function drawResumeDocument(color = "#4f46e5", offsetY = 0, scale = 1) {
+        const x = 884;
+        const y = 378 + offsetY;
+        const w = 452 * scale;
+        const h = 312 * scale;
+        roundedRect(x, y, w, h, 6, "#ffffff", "rgba(148,163,184,0.22)");
+        roundedRect(x, y, w, 72 * scale, 6, color, null);
+        text("Pratap Patil", x + 28 * scale, y + 20 * scale, { font: `${Math.round(800 * scale)} ${Math.round(26 * scale)}px Segoe UI`, color: "#ffffff" });
+        text("Backend Developer", x + 28 * scale, y + 50 * scale, { font: `${Math.round(600 * scale)} ${Math.round(14 * scale)}px Segoe UI`, color: "rgba(255,255,255,0.9)" });
+
+        const lines = [
+          ["Professional Summary", 96],
+          ["Experience", 164],
+          ["Education", 220],
+          ["Projects", 264],
+        ];
+        lines.forEach(([label, dy]) => {
+          text(label, x + 28 * scale, y + dy * scale, { font: `${Math.round(800 * scale)} ${Math.round(16 * scale)}px Segoe UI`, color: "#0f172a" });
+          for (let i = 0; i < 3; i++) {
+            roundedRect(x + 28 * scale, y + (dy + 26 + i * 14) * scale, (360 - i * 42) * scale, 7 * scale, 3, "#e2e8f0", null);
+          }
+        });
+      }
+
+      function drawHighlight(x, y, w, h, color, pulse = 1) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 4 + pulse * 2;
+        ctx.setLineDash([14, 10]);
+        roundedRect(x, y, w, h, 20, null, color);
+        ctx.restore();
+      }
+
+      function drawBadge(label, x, y, bg, fg = "#fff") {
+        roundedRect(x, y, ctx.measureText(label).width + 30, 36, 18, bg, null);
+        text(label, x + 15, y + 8, { font: "800 15px Segoe UI", color: fg });
+      }
+
+      function sceneIntro(scene) {
+        const p = easeOutCubic(scene.progress);
+        drawBackdrop();
+
+        ctx.save();
+        ctx.globalAlpha = p;
+        roundedRect(110, 120, 1380, 660, 36, alpha("rgba(255,255,255,ALPHA)", 0.88), "rgba(255,255,255,0.5)");
+        text("Create job-ready resumes faster", 800, 178, {
+          font: "800 62px Segoe UI",
+          color: "#0f172a",
+          align: "center",
+        });
+        wrapText(
+          "ResumeCraft combines guided editing, instant preview, template switching, ATS-oriented analysis, and export options in one focused workspace.",
+          300,
+          278,
+          1000,
+          44,
+          { font: "500 28px Segoe UI", color: "#475569", align: "center" }
+        );
+
+        const featureY = 430;
+        [
+          ["14 templates", "#eef2ff", "#4338ca"],
+          ["Paste and parse", "#ecfeff", "#0f766e"],
+          ["AI match analysis", "#fef3c7", "#b45309"],
+          ["PDF + Word export", "#dcfce7", "#047857"],
+        ].forEach((item, index) => {
+          roundedRect(220 + index * 285, featureY, 240, 126, 24, item[1], null);
+          text(item[0], 340 + index * 285, featureY + 46, {
+            font: "800 28px Segoe UI",
+            color: item[2],
+            align: "center",
+          });
+        });
+
+        drawResumeDocument("#4f46e5", 130 - 80 * p, 1.05);
+        ctx.restore();
+      }
+
+      function sceneWorkspace(scene) {
+        drawBackdrop();
+        drawAppShell(
+          "Everything happens in one screen",
+          "The product keeps editing on the left and the live resume preview on the right, so users can see changes as they build.",
+          scene.progress,
+          "Fill Form"
+        );
+        drawResumeDocument("#4f46e5");
+        const pulse = 0.5 + 0.5 * Math.sin(scene.localTime * 3.5);
+        drawHighlight(100, 252, 610, 546, `rgba(99,102,241,${0.4 + pulse * 0.4})`, pulse);
+        drawHighlight(736, 252, 744, 546, `rgba(16,185,129,${0.35 + pulse * 0.35})`, pulse);
+        drawBadge("Edit here", 146, 730, "#4f46e5");
+        drawBadge("Preview updates instantly", 1180, 730, "#10b981");
+      }
+
+      function sceneForm(scene) {
+        drawBackdrop();
+        drawAppShell(
+          "Build the resume section by section",
+          "Users can fill personal details, summary, experience, education, projects, certifications, languages, and custom sections without leaving the page.",
+          scene.progress,
+          "Fill Form"
+        );
+
+        const formCards = [
+          ["Personal Information", 116, 408, 560, 74],
+          ["Experience", 116, 500, 560, 104],
+          ["Education", 116, 620, 560, 74],
+          ["Skills, projects, and custom sections", 116, 710, 560, 56],
+        ];
+        formCards.forEach((card, index) => {
+          roundedRect(card[1], card[2], card[3], card[4], 18, "#f8fafc", "rgba(148,163,184,0.26)");
+          text(card[0], card[1] + 22, card[2] + 20, { font: "700 22px Segoe UI", color: "#1e293b" });
+          if (index < 3) {
+            roundedRect(card[1] + 22, card[2] + 48, 180, 8, 4, "#cbd5e1", null);
+            roundedRect(card[1] + 214, card[2] + 48, 128, 8, 4, "#cbd5e1", null);
+          }
+        });
+
+        const glowY = 500 + Math.sin(scene.localTime * 2) * 12;
+        drawResumeDocument("#4f46e5", glowY * 0.18);
+        drawHighlight(108, 398, 576, 216, "rgba(99,102,241,0.6)", 1);
+      }
+
+      function sceneTemplates(scene) {
+        drawBackdrop();
+        drawAppShell(
+          "Switch between ATS-safe and designer templates",
+          "The template selector lets users choose from conservative single-column layouts or more visual designs depending on the role and submission format.",
+          scene.progress,
+          "Fill Form"
+        );
+
+        const cards = [
+          { x: 140, y: 410, w: 160, h: 236, color: "#4f46e5", label: "ATS Safe" },
+          { x: 332, y: 410, w: 160, h: 236, color: "#0f766e", label: "Corporate" },
+          { x: 524, y: 410, w: 160, h: 236, color: "#b45309", label: "Designer" },
+        ];
+        const focus = Math.floor((scene.progress * 3) % 3);
+
+        cards.forEach((card, index) => {
+          const active = index === focus;
+          roundedRect(card.x, card.y, card.w, card.h, 20, "#ffffff", active ? card.color : "rgba(148,163,184,0.25)");
+          roundedRect(card.x, card.y, card.w, 46, 20, active ? card.color : "#e2e8f0", null);
+          for (let i = 0; i < 6; i++) {
+            roundedRect(card.x + 18, card.y + 66 + i * 22, card.w - 36 - i * 10, 8, 4, "#cbd5e1", null);
+          }
+          text(card.label, card.x + card.w / 2, card.y + 14, {
+            font: "800 18px Segoe UI",
+            color: active ? "#fff" : "#334155",
+            align: "center",
+          });
+        });
+
+        drawResumeDocument(focus === 0 ? "#4f46e5" : focus === 1 ? "#0f766e" : "#b45309");
+        drawBadge("14 template options", 390, 700, "#111827");
+      }
+
+      function scenePaste(scene) {
+        drawBackdrop();
+        drawAppShell(
+          "Paste an existing resume and let the app extract structure",
+          "For users starting from unformatted text, the parser can pull out names, title, summary, skills, experience, education, and project data into the editor.",
+          scene.progress,
+          "Paste Resume"
+        );
+
+        roundedRect(118, 412, 548, 260, 20, "#f8fafc", "rgba(148,163,184,0.25)");
+        text("Paste resume text here...", 146, 438, { font: "700 22px Segoe UI", color: "#94a3b8" });
+        const lines = [
+          "Pratap Patil",
+          "Backend Developer",
+          "Python, Django, DRF, Redis, AWS S3",
+          "Experience: EC Infosolutions Pvt Ltd...",
+          "Education: B.Sc. Computer Science",
+        ];
+        lines.forEach((line, index) => {
+          text(line, 146, 488 + index * 34, { font: "600 20px Segoe UI", color: "#334155" });
+        });
+        roundedRect(118, 694, 548, 54, 16, "#4f46e5", null);
+        text("Parse & Apply", 392, 709, { font: "800 22px Segoe UI", color: "#ffffff", align: "center" });
+
+        const arrowX = 706 + easeInOut(scene.progress) * 90;
+        ctx.strokeStyle = "#4f46e5";
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.moveTo(arrowX, 536);
+        ctx.lineTo(arrowX + 120, 536);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(arrowX + 120, 536);
+        ctx.lineTo(arrowX + 92, 514);
+        ctx.lineTo(arrowX + 92, 558);
+        ctx.closePath();
+        ctx.fillStyle = "#4f46e5";
+        ctx.fill();
+
+        roundedRect(900, 436, 380, 236, 22, "#ffffff", "rgba(148,163,184,0.25)");
+        ["personalInfo", "experience", "education", "skills", "projects"].forEach((item, index) => {
+          roundedRect(928, 462 + index * 38, 324, 24, 12, "#eef2ff", null);
+          text(item, 948, 466 + index * 38, { font: "800 16px Segoe UI", color: "#4338ca" });
+        });
+        drawResumeDocument("#4f46e5", 26);
+      }
+
+      function sceneLayout(scene) {
+        drawBackdrop();
+        drawAppShell(
+          "Reorder or hide resume sections",
+          "Layout controls make it easy to move sections up and down, show only what matters, and tailor the story for different applications.",
+          scene.progress,
+          "Layout Options"
+        );
+
+        const items = [
+          "Professional Summary",
+          "Experience",
+          "Education",
+          "Projects",
+          "Courses & Certifications",
+          "Skills",
+          "Languages",
+        ];
+        const shift = Math.sin(scene.localTime * 2.2) * 18;
+
+        items.forEach((item, index) => {
+          const y = 392 + index * 48 + (index === 2 ? shift : 0);
+          roundedRect(120, y, 562, 38, 12, index === 5 ? "#f1f5f9" : "#f8fafc", "rgba(148,163,184,0.25)");
+          text(item, 148, y + 9, { font: "700 18px Segoe UI", color: "#334155" });
+          roundedRect(570, y + 6, 84, 26, 12, index === 5 ? "#fee2e2" : "#eef2ff", null);
+          text(index === 5 ? "Hidden" : "Show", 612, y + 11, {
+            font: "800 12px Segoe UI",
+            color: index === 5 ? "#b91c1c" : "#4338ca",
+            align: "center",
+          });
+        });
+
+        drawResumeDocument("#4f46e5");
+        drawHighlight(110, 382, 580, 388, "rgba(99,102,241,0.52)", 0.8);
+        drawBadge("Tailor section order to the job", 1036, 708, "#4f46e5");
+      }
+
+      function sceneAi(scene) {
+        drawBackdrop();
+        drawAppShell(
+          "Run ATS-style analysis against a target job description",
+          "The AI tab helps users compare their resume to a role, surface missing skills, and collect practical improvement suggestions before they apply.",
+          scene.progress,
+          "AI Analysis"
+        );
+
+        roundedRect(120, 404, 556, 196, 22, "#f8fafc", "rgba(148,163,184,0.25)");
+        text("Job Description", 148, 430, { font: "800 20px Segoe UI", color: "#334155" });
+        [
+          "Python backend developer",
+          "Django REST Framework, Redis, AWS",
+          "API design, async processing, cloud delivery",
+          "Strong communication and ownership",
+        ].forEach((line, index) => {
+          text(line, 148, 470 + index * 30, { font: "600 18px Segoe UI", color: "#475569" });
+        });
+
+        roundedRect(120, 622, 556, 56, 16, "#4f46e5", null);
+        text(scene.progress < 0.55 ? "Analyzing with AI..." : "Analyze Match", 398, 638, {
+          font: "800 22px Segoe UI",
+          color: "#ffffff",
+          align: "center",
+        });
+
+        roundedRect(120, 698, 556, 72, 18, "#0f172a", null);
+        const thinking = [
+          "Reading resume sections...",
+          "Comparing skills to job description...",
+          "Scoring ATS alignment...",
+        ];
+        const visible = Math.min(thinking.length, 1 + Math.floor(scene.localTime));
+        for (let i = 0; i < visible; i++) {
+          text(thinking[i], 148, 716 + i * 18, { font: "600 14px Consolas", color: "#86efac" });
+        }
+
+        roundedRect(904, 394, 376, 122, 22, "#eef2ff", null);
+        text("ATS Score", 932, 426, { font: "800 18px Segoe UI", color: "#4338ca" });
+        text(`${72 + Math.round(easeInOut(scene.progress) * 18)}%`, 932, 452, { font: "900 52px Segoe UI", color: "#1e1b4b" });
+
+        roundedRect(904, 538, 376, 104, 22, "#faf5ff", null);
+        text("Missing Skills", 932, 566, { font: "800 18px Segoe UI", color: "#7e22ce" });
+        ["AWS CloudFront", "OAuth", "Monitoring"].forEach((item, index) => {
+          drawBadge(item, 932 + index * 114, 598, "#f3e8ff", "#6b21a8");
+        });
+
+        roundedRect(904, 662, 376, 108, 22, "#ffffff", "rgba(148,163,184,0.25)");
+        text("Improvements", 932, 688, { font: "800 18px Segoe UI", color: "#111827" });
+        [
+          "Quantify API scale and performance",
+          "Mirror role-specific keywords",
+          "Strengthen summary with outcomes",
+        ].forEach((item, index) => {
+          text(`${index + 1}. ${item}`, 932, 720 + index * 18, { font: "600 14px Segoe UI", color: "#475569" });
+        });
+      }
+
+      function sceneExport(scene) {
+        drawBackdrop();
+        drawAppShell(
+          "Finish with polished export options",
+          "Once the resume looks right, users can download a PDF for easy sharing or generate a Word document for editable delivery and recruiter workflows.",
+          scene.progress,
+          "Fill Form"
+        );
+
+        drawResumeDocument("#4f46e5", -8, 1.08);
+        const pulse = 0.5 + 0.5 * Math.sin(scene.localTime * 4);
+        drawHighlight(1182, 280, 116, 44, `rgba(99,102,241,${0.4 + pulse * 0.4})`, pulse);
+        drawHighlight(1308, 280, 124, 44, `rgba(16,185,129,${0.35 + pulse * 0.4})`, pulse);
+
+        roundedRect(180, 660, 480, 96, 26, "#111827", null);
+        text("Use this tour for demos, onboarding, landing pages, and social posts.", 420, 690, {
+          font: "700 26px Segoe UI",
+          color: "#ffffff",
+          align: "center",
+        });
+      }
+
+      const sceneRenderers = {
+        intro: sceneIntro,
+        workspace: sceneWorkspace,
+        form: sceneForm,
+        templates: sceneTemplates,
+        paste: scenePaste,
+        layout: sceneLayout,
+        ai: sceneAi,
+        export: sceneExport,
+      };
+
+      function render(now) {
+        const time = getPlayhead(now);
+        const safeTime = clamp(time, 0, totalDuration);
+        const scene = getScene(safeTime);
+
+        ctx.clearRect(0, 0, W, H);
+        sceneRenderers[scene.key](scene);
+
+        roundedRect(120, 812, 1360, 14, 7, "rgba(255,255,255,0.55)", null);
+        roundedRect(120, 812, 1360 * (safeTime / totalDuration), 14, 7, "#4f46e5", null);
+
+        if (time >= totalDuration) {
+          if (recording && recorder && recorder.state === "recording") {
+            recorder.stop();
+          }
+          if (isPlaying) {
+            accumulated = 0;
+            startedAt = performance.now();
+          }
+        }
+
+        rafId = requestAnimationFrame(render);
+      }
+
+      function play() {
+        if (isPlaying) return;
+        isPlaying = true;
+        startedAt = performance.now();
+        statusText.innerHTML = "<strong>Playing:</strong> the tour is running.";
+      }
+
+      function pause() {
+        if (!isPlaying) return;
+        accumulated = getPlayhead(performance.now());
+        isPlaying = false;
+        statusText.innerHTML = "<strong>Paused:</strong> you can resume or restart any time.";
+      }
+
+      function restart() {
+        accumulated = 0;
+        startedAt = performance.now();
+        isPlaying = true;
+        statusText.innerHTML = "<strong>Restarted:</strong> the tour is back at the intro scene.";
+      }
+
+      function exportVideo() {
+        if (!window.MediaRecorder) {
+          statusText.innerHTML = "<strong>Unsupported:</strong> this browser does not support MediaRecorder for canvas export.";
+          return;
+        }
+        if (recording) return;
+
+        recordedChunks = [];
+        accumulated = 0;
+        isPlaying = true;
+        startedAt = performance.now();
+
+        const stream = canvas.captureStream(30);
+        recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
+        recording = true;
+
+        recorder.ondataavailable = (event) => {
+          if (event.data && event.data.size) {
+            recordedChunks.push(event.data);
+          }
+        };
+
+        recorder.onstop = () => {
+          const blob = new Blob(recordedChunks, { type: "video/webm" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "resumecraft-site-tour.webm";
+          link.click();
+          URL.revokeObjectURL(url);
+          recording = false;
+          statusText.innerHTML = "<strong>Complete:</strong> the tour video has been downloaded as <code>resumecraft-site-tour.webm</code>.";
+          recordBtn.disabled = false;
+        };
+
+        recorder.start();
+        recordBtn.disabled = true;
+        statusText.innerHTML = `<strong>Recording:</strong> exporting video now. Please wait about ${Math.ceil(totalDuration)} seconds for the full tour.`;
+      }
+
+      playBtn.addEventListener("click", play);
+      pauseBtn.addEventListener("click", pause);
+      restartBtn.addEventListener("click", restart);
+      recordBtn.addEventListener("click", exportVideo);
+
+      startedAt = performance.now();
+      rafId = requestAnimationFrame(render);
+    </script>
+  </body>
+</html>
